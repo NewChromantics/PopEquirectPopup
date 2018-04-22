@@ -57,6 +57,12 @@ public class EquirectMeshEditor : MonoBehaviour
 	public int ExportTextureMapSize = 1024;
 	public DrawTriangleShader ExportTextureMapShader = new DrawTriangleShader();
 
+	public Material BlitPositionToProjectionShader;
+	//WorldPos
+	public string BlitPosition_EquirectTexture_Uniform = "EquirectTexture";
+	public string BlitPosition_EyePosition_Uniform = "EyePosition";
+	public Texture EquirectTexture;
+
 	public void AddScreenPoint(Vector2 ScreenPos)
 	{
 		var Ray = Plotter.Camera.GetComponent<Camera>().ScreenPointToRay(ScreenPos.xy0());
@@ -80,14 +86,15 @@ public class EquirectMeshEditor : MonoBehaviour
 		try
 		{
 			//	make a mesh
-			var mesh = Plotter.GenerateMesh();
+			Vector3 EyePosition;
+			var mesh = Plotter.GenerateMesh(out EyePosition);
 
 			//	make a texture map and get it's new uvs
 			Vector2[] AtlasUvs;
 			var PositionAtlas = GeneratePositionTextureMap(mesh, out AtlasUvs, ExportTextureMapSize);
 			mesh.uv = AtlasUvs;
-			//var ProjectedTexture = GenerateProjectedTextureMap(PositionAtlas);
-			var ProjectedTexture = PositionAtlas;
+			//var ProjectedTexture = PositionAtlas;
+			var ProjectedTexture = GenerateProjectedTextureMap(PositionAtlas,EyePosition);
 			var ProjectedTexture2D = PopX.Textures.GetTexture2D(ProjectedTexture,true);
 
 			string Filename;
@@ -164,6 +171,7 @@ public class EquirectMeshEditor : MonoBehaviour
 		var AtlasTriangles = PopTrianglePacker.AllocateTriangleAtlases(MeshTriangles);
 
 		var AtlasTexture = new RenderTexture(TextureSize, TextureSize, 0, RenderTextureFormat.ARGBFloat);
+		AtlasTexture.filterMode = FilterMode.Point;
 		
 		RenderTriangleAtlas(ref AtlasTexture, AtlasTriangles, MeshTriangles);
 
@@ -190,9 +198,14 @@ public class EquirectMeshEditor : MonoBehaviour
 	}
 
 
-	Texture GenerateProjectedTextureMap(Texture PositionTextureMap)
+	Texture GenerateProjectedTextureMap(Texture PositionTextureMap,Vector3 EyePosition)
 	{
-		throw new System.Exception("todo");
+		BlitPositionToProjectionShader.SetTexture(BlitPosition_EquirectTexture_Uniform, EquirectTexture);
+		BlitPositionToProjectionShader.SetVector(BlitPosition_EyePosition_Uniform, EyePosition);
+
+		var ProjectedTextureMap = new RenderTexture(PositionTextureMap.width, PositionTextureMap.height, 0, RenderTextureFormat.ARGB32);
+		Graphics.Blit(PositionTextureMap, ProjectedTextureMap, BlitPositionToProjectionShader);
+		return ProjectedTextureMap;
 	}
 }
 

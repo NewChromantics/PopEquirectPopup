@@ -183,6 +183,14 @@ public class EquirectMeshPlotter : MonoBehaviour
 
 	public Mesh GenerateMesh()
 	{
+		Vector3 EyePosition;
+		return GenerateMesh(out EyePosition);
+	}
+
+	public Mesh GenerateMesh(out Vector3 EyePosition)
+	{
+		EyePosition = RayOrigin;
+
 		var WorldPoints = GetWorldPoints();
 		if (WorldPoints.Count < 2)
 			throw new System.Exception("Not enough points to generate mesh");

@@ -188,11 +188,16 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   RemoveMaxDistance: 0.001
   ExportTextureMapFormat: 0
-  ExportTextureMapSize: 1024
+  ExportTextureMapSize: 4096
   ExportTextureMapShader:
     BlitShader: {fileID: 4800000, guid: 46034205bf4de47cb8c6d094f22b2f35, type: 3}
     TriangleUvs_Uniform: TriangleUvs
     TriangleColours_Uniform: TriangleColours
+  BlitPositionToProjectionShader: {fileID: 2100000, guid: 5a7eabddf2a99440296def7dc4fff9f8,
+    type: 2}
+  BlitPosition_EquirectTexture_Uniform: EquirectTexture
+  BlitPosition_EyePosition_Uniform: EyePosition
+  EquirectTexture: {fileID: 2800000, guid: c117e14e3679e4c50b1f16e2e2520bfd, type: 3}
 --- !u!1 &758624334
 GameObject:
   m_ObjectHideFlags: 0
