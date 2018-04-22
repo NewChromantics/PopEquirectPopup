@@ -4,6 +4,10 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 
 
+[System.Serializable]
+public class UnityEvent_Vector2 : UnityEngine.Events.UnityEvent<Vector2> { }
+
+
 public class RawImageOnClick : MonoBehaviour, IPointerClickHandler
 {
 	public UnityEvent_Vector2 OnLeftClickScreen;

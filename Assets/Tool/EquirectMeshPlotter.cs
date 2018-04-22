@@ -238,7 +238,7 @@ public class EquirectMeshPlotter : MonoBehaviour
 		Mesh.name = this.name;
 		Mesh.SetVertices(Positions);
 		Mesh.SetUVs(0, Uv0s);
-		Mesh.SetUVs(1, ViewDirections);
+		Mesh.SetUVs(1, Directions);
 		Mesh.SetTriangles(TriangleIndexes.ToArray(),0);
 		return Mesh;
 	}
