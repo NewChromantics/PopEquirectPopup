@@ -3,6 +3,47 @@ using System.Collections.Generic;
 using UnityEngine;
 
 
+[System.Serializable]
+public class DrawTriangleShader
+{
+	//	unity caches sizes of array uniforms, so we pre-make certain sizes
+	const int MaxTriangleCount = 10;
+
+	public Shader BlitShader;
+	public string TriangleUvs_Uniform = "TriangleUvs";
+	public string TriangleColours_Uniform = "TriangleColours";
+
+
+	public void SetUniforms(Material DrawTriangleMaterial,Triangle2 TriangleUvs,Triangle3 TriangleColours)
+	{
+		var Uvs = new List<Vector2>();
+		Uvs.Add(TriangleUvs.a);
+		Uvs.Add(TriangleUvs.b);
+		Uvs.Add(TriangleUvs.c);
+
+		var Colours = new List<Color>();
+		Colours.Add(new Color(TriangleColours.a.x, TriangleColours.a.y, TriangleColours.a.z, 1));
+		Colours.Add(new Color(TriangleColours.b.x, TriangleColours.b.y, TriangleColours.b.z, 1));
+		Colours.Add(new Color(TriangleColours.c.x, TriangleColours.c.y, TriangleColours.c.z, 1));
+
+		SetUniforms(DrawTriangleMaterial, Uvs, Colours);
+	}
+
+	public void SetUniforms(Material DrawTriangleMaterial,List<Vector2> TriangleUvs, List<Color> TriangleColours)
+	{
+		var TriangleUvs4s = new List<Vector4>();
+		foreach (var Uv2 in TriangleUvs)
+			TriangleUvs4s.Add(Uv2.xy00());
+
+		var TriangleColour4s = new List<Vector4>();
+		foreach (var Colour in TriangleColours)
+			TriangleColour4s.Add(Colour.GetVector4());
+
+		DrawTriangleMaterial.SetVectorArray(TriangleUvs_Uniform, TriangleUvs4s);
+		DrawTriangleMaterial.SetVectorArray(TriangleColours_Uniform, TriangleColour4s);
+	}
+}
+
 
 
 [RequireComponent(typeof(EquirectMeshPlotter))]
@@ -12,7 +53,9 @@ public class EquirectMeshEditor : MonoBehaviour
 	public float RemoveMaxDistance = 0.1f;
 
 	EquirectMeshPlotter	Plotter	{ get { return GetComponent<EquirectMeshPlotter>(); }}
-
+	public PopX.IO.ImageFileType ExportTextureMapFormat = PopX.IO.ImageFileType.jpg;
+	public int ExportTextureMapSize = 1024;
+	public DrawTriangleShader ExportTextureMapShader = new DrawTriangleShader();
 
 	public void AddScreenPoint(Vector2 ScreenPos)
 	{
@@ -36,10 +79,31 @@ public class EquirectMeshEditor : MonoBehaviour
 	{
 		try
 		{
-			var Mesh = Plotter.GenerateMesh();
+			//	make a mesh
+			var mesh = Plotter.GenerateMesh();
+
+			//	make a texture map and get it's new uvs
+			Vector2[] AtlasUvs;
+			var PositionAtlas = GeneratePositionTextureMap(mesh, out AtlasUvs, ExportTextureMapSize);
+			mesh.uv = AtlasUvs;
+			//var ProjectedTexture = GenerateProjectedTextureMap(PositionAtlas);
+			var ProjectedTexture = PositionAtlas;
+			var ProjectedTexture2D = PopX.Textures.GetTexture2D(ProjectedTexture,true);
+
 			string Filename;
-			var WriteLine = PopX.IO.GetFileWriteLineFunction(out Filename,"Exported Obj", "Mesh", PopX.WavefrontObj.FileExtension);
-			PopX.WavefrontObj.Export(WriteLine, Mesh, Matrix4x4.identity);
+			var WriteMeshLine = PopX.IO.GetFileWriteLineFunction(out Filename, "Exported Obj", "Mesh", PopX.WavefrontObj.MeshFileExtension);
+
+			var TextureFilename = System.IO.Path.ChangeExtension(Filename, PopX.IO.GetImageFormatExtension(ExportTextureMapFormat));
+			var MaterialFilename = System.IO.Path.ChangeExtension(Filename, PopX.WavefrontObj.MaterialFileExtension);
+			var WriteMaterialLine = PopX.IO.GetFileWriteLineFunction(MaterialFilename);
+
+			var Material = new PopX.WavefrontObj.ObjMaterial("ProjectionMap",TextureFilename);
+
+			PopX.WavefrontObj.Export(WriteMeshLine, mesh, Matrix4x4.identity, Material, MaterialFilename );
+			PopX.WavefrontObj.Export(WriteMaterialLine, Material);
+			var WriteImage = PopX.IO.GetFileWriteImageFunction(ExportTextureMapFormat);
+			WriteImage(TextureFilename,ProjectedTexture2D);
+
 			UnityEditor.EditorUtility.RevealInFinder(Filename);
 		}
 		catch(System.Exception e)
@@ -48,80 +112,40 @@ public class EquirectMeshEditor : MonoBehaviour
 		}
 	}
 
-	struct Triangle3
-	{
-		public Vector3 a;
-		public Vector3 b;
-		public Vector3 c;
-	};
-	struct Triangle2
-	{
-		public Vector2 a;
-		public Vector2 b;
-		public Vector2 c;
-	};
-	struct Bounds2
-	{
-		public Vector2 Min;
-		public Vector2 Max;
-	};
 
-	//	triangle packing!
-	List<Triangle2> AllocateTriangleAtlases(List<Triangle3> MeshTriangles)
+	void RenderTriangleAtlas(ref RenderTexture AtlasTexture, List<Triangle2> AtlasTriangles, List<Triangle3> MeshTriangles)
 	{
-		var TriangleCount = MeshTriangles.Count;
-		var AtlasWidth = (int)Mathf.Ceil(Mathf.Sqrt((float)TriangleCount));
-		var AtlasHeight = AtlasWidth;
+		//	render each triangle to atlas (can probably do all of these at once with an ortho camera)
 
-		var AtlasTriangles = new List<Triangle2>();
+		//	make a temp copy
+		var TempTexture = new RenderTexture(AtlasTexture);
+		PopX.Textures.ClearTexture(AtlasTexture, Color.black);
+		PopX.Textures.ClearTexture(TempTexture, Color.black);
 
-		for (int ti = 0; ti<MeshTriangles.Count;	ti++)
+		Pop.AllocIfNull(ref ExportTextureMapShader);
+		var Material = new Material(ExportTextureMapShader.BlitShader);
+
+		for (int t = 0; t < AtlasTriangles.Count; t++)
 		{
-			var MeshTriangle = MeshTriangles[ti];
-
-			//	get atlas quad
-			var AtlasX = ti % AtlasWidth;
-			var AtlasY = ti / AtlasWidth;
-			var AtlasMinu = PopMath.Range(0, AtlasWidth, AtlasX);
-			var AtlasMaxu = PopMath.Range(0, AtlasWidth, AtlasX+1);
-			var AtlasMinv = PopMath.Range(0, AtlasHeight, AtlasY);
-			var AtlasMaxv = PopMath.Range(0, AtlasHeight, AtlasY+1);
-
-			//	todo: get triangle position on it's plane (ie, it's ortho)
-			var AtlasTriangle = new Triangle2();
-			AtlasTriangle.a = MeshTriangle.a.xz();
-			AtlasTriangle.b = MeshTriangle.b.xz();
-			AtlasTriangle.c = MeshTriangle.c.xz();
-
-			//	fit triangle to quad
-			var AtlasTriangleBounds = new Bounds2();
-			AtlasTriangleBounds.Min = PopMath.Min(AtlasTriangle.a, AtlasTriangle.b, AtlasTriangle.c);
-			AtlasTriangleBounds.Max = PopMath.Max(AtlasTriangle.a, AtlasTriangle.b, AtlasTriangle.c);
-			AtlasTriangle.a = PopMath.Range(AtlasTriangleBounds.Min, AtlasTriangleBounds.Max, AtlasTriangle.a);
-			AtlasTriangle.b = PopMath.Range(AtlasTriangleBounds.Min, AtlasTriangleBounds.Max, AtlasTriangle.b);
-			AtlasTriangle.c = PopMath.Range(AtlasTriangleBounds.Min, AtlasTriangleBounds.Max, AtlasTriangle.c);
-
-			//	now put it in it's atlas pos
-			AtlasTriangle.a.x = Mathf.Lerp(AtlasMinu, AtlasMaxu, AtlasTriangle.a.x);
-			AtlasTriangle.a.y = Mathf.Lerp(AtlasMinv, AtlasMaxv, AtlasTriangle.a.y);
-			AtlasTriangle.b.x = Mathf.Lerp(AtlasMinu, AtlasMaxu, AtlasTriangle.b.x);
-			AtlasTriangle.b.y = Mathf.Lerp(AtlasMinv, AtlasMaxv, AtlasTriangle.b.y);
-			AtlasTriangle.c.x = Mathf.Lerp(AtlasMinu, AtlasMaxu, AtlasTriangle.c.x);
-			AtlasTriangle.c.y = Mathf.Lerp(AtlasMinv, AtlasMaxv, AtlasTriangle.c.y);
-
-			AtlasTriangles.Add(AtlasTriangle);
+			ExportTextureMapShader.SetUniforms(Material, AtlasTriangles[t], MeshTriangles[t]);
+			Graphics.Blit(TempTexture, AtlasTexture, Material);
+			Graphics.Blit(AtlasTexture, TempTexture);
 		}
 
-		return AtlasTriangles;
 	}
 
-	void GenerateProjectedTextureMap(Mesh mesh,out List<Vector2> VertexAtlasUvs)
+	//	generate a loat texture map which contains the XYZ(Valid) position of every triangle
+	Texture GeneratePositionTextureMap(Mesh mesh, out Vector2[] VertexAtlasUvs,int TextureSize)
 	{
 		//	generate atlas
 		var MeshTriangles = new List<Triangle3>();
 		var Positions = mesh.vertices;
 		var TriangleIndexes = mesh.triangles;
-		System.Action<int,int,int> AddTriangleByVertexIndexes = (a,b,c) =>
+
+		if ( Positions.Length != TriangleIndexes.Length )
+			throw new System.Exception("Mesh vertexes need to be unshared. To use shared vertexes we may need to split individual triangles depending on atlasing");
+
+		System.Action<int, int, int> AddTriangleByVertexIndexes = (a, b, c) =>
 		{
 			var Triangle = new Triangle3();
 			Triangle.a = Positions[a];
@@ -129,7 +153,7 @@ public class EquirectMeshEditor : MonoBehaviour
 			Triangle.c = Positions[c];
 			MeshTriangles.Add(Triangle);
 		};
-		for (int t = 0; t < TriangleIndexes.Length;	t+=3 )
+		for (int t = 0; t < TriangleIndexes.Length; t += 3)
 		{
 			var ia = TriangleIndexes[t + 0];
 			var ib = TriangleIndexes[t + 1];
@@ -137,14 +161,38 @@ public class EquirectMeshEditor : MonoBehaviour
 			AddTriangleByVertexIndexes(ia, ib, ic);
 		}
 
-		var AtlasTriangles = AllocateTriangleAtlases(MeshTriangles);
+		var AtlasTriangles = PopTrianglePacker.AllocateTriangleAtlases(MeshTriangles);
 
-		//	put atlas back into mesh
-		//	for every triangle, get atlasuv, get each vertex (assume disconnected) and write
-		List<Vector2> VertexAtlasUvs
+		var AtlasTexture = new RenderTexture(TextureSize, TextureSize, 0, RenderTextureFormat.ARGBFloat);
+		
+		RenderTriangleAtlas(ref AtlasTexture, AtlasTriangles, MeshTriangles);
 
-		//	render each triangle to atlas (can probably do all of these at once with an ortho camera)
-		Graphics.Blit()
+		//	need to give vertexes new uvs! one per vertex
+		//	one 
+		VertexAtlasUvs = new Vector2[Positions.Length];
+		for (int t = 0; t < TriangleIndexes.Length/3; t++)
+		{
+			var TriangleIndex = t * 3;
+			var VertexIndexa = TriangleIndexes[TriangleIndex + 0];
+			var VertexIndexb = TriangleIndexes[TriangleIndex + 1];
+			var VertexIndexc = TriangleIndexes[TriangleIndex + 2];
+			//	get uvs of triangle
+			var uva = AtlasTriangles[t].a;
+			var uvb = AtlasTriangles[t].b;
+			var uvc = AtlasTriangles[t].c;
+
+			VertexAtlasUvs[VertexIndexa] = uva;
+			VertexAtlasUvs[VertexIndexb] = uvb;
+			VertexAtlasUvs[VertexIndexc] = uvc;
+		}
+
+		return AtlasTexture;
+	}
+
+
+	Texture GenerateProjectedTextureMap(Texture PositionTextureMap)
+	{
+		throw new System.Exception("todo");
 	}
 }
 

@@ -227,7 +227,9 @@ public class EquirectMeshPlotter : MonoBehaviour
 					float tb = (subdiv + 1) * Step;
 					var a = Prev.LerpTo(Next, ta);
 					var b = Prev.LerpTo(Next, tb);
-					AddTriangle(CenterVertex, a, b);
+
+					//	gr: note counter clockwise triangle order
+					AddTriangle(CenterVertex, b, a);
 				}
 			}
 			catch
