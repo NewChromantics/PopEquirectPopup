@@ -24,6 +24,9 @@ public class EquirectMeshPlotter : MonoBehaviour
 
 	float FloorY { get { return 0; } }
 	float CameraY { get { return Camera.position.y; } }
+	[Range(0.0f, 10.0f)]
+	public float	WallHeight = 4;
+	public bool		GenerateWalls	{ get { return WallHeight > 0; }}
 
 	[OnChanged(null,"OnChanged")]
 	public bool InvertU = false;
@@ -56,6 +59,17 @@ public class EquirectMeshPlotter : MonoBehaviour
 			var d = Vector3.Lerp(Prev.Direction, Next.Direction, Time);
 			var New = new PositionAndUv(p, u, d);
 			return New;
+		}
+	};
+	struct PositionAndUv2
+	{
+		public PositionAndUv a;
+		public PositionAndUv b;
+
+		public PositionAndUv2(PositionAndUv a, PositionAndUv b)
+		{
+			this.a = a;
+			this.b = b;
 		}
 	};
 
@@ -219,6 +233,8 @@ public class EquirectMeshPlotter : MonoBehaviour
 			TriangleIndexes.Add(v2);
 		};
 
+		var FloorEdgeVertexes = new List<PositionAndUv2>();
+
 		//	gr: should this be floorY?
 		var CenterVertex = new PositionAndUv(Vector3.zero, GetEquirectUvFromView(Vector3.down), Vector3.down );
 		for (int i = 0; i < WorldPoints.Count;	i++ )
@@ -236,6 +252,8 @@ public class EquirectMeshPlotter : MonoBehaviour
 					var a = Prev.LerpTo(Next, ta);
 					var b = Prev.LerpTo(Next, tb);
 
+					FloorEdgeVertexes.Add( new PositionAndUv2(a, b));
+
 					//	gr: note counter clockwise triangle order
 					AddTriangle(CenterVertex, b, a);
 				}
@@ -243,6 +261,30 @@ public class EquirectMeshPlotter : MonoBehaviour
 			catch
 			{}
 		}
+
+		System.Action<PositionAndUv, PositionAndUv> ExtrudeAndAddWallQuad = (Floora, Floorb) =>
+		{
+			//	make quad
+			var Ceilinga = Floora;
+			var Ceilingb = Floorb;
+
+			//	do I need to recalculate direction to get proper view vector?
+			//	probably, but for reprojection shader, no?
+			Ceilinga.Position.y += WallHeight;
+			Ceilingb.Position.y += WallHeight;
+
+			AddTriangle(Floorb, Floora, Ceilinga);
+			AddTriangle(Floorb, Ceilinga, Ceilingb);
+		};
+
+		if ( GenerateWalls )
+		{
+			foreach ( var FloorEdge in FloorEdgeVertexes )
+			{
+				ExtrudeAndAddWallQuad(FloorEdge.a, FloorEdge.b);
+			}
+		}
+
 
 		var Mesh = new Mesh();
 		Mesh.name = this.name;
